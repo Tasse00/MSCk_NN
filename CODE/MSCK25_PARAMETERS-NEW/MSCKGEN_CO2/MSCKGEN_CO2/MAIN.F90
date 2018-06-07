@@ -1,0 +1,194 @@
+    MODULE MSCK_CO2
+        INTEGER NBGROUP,NKMAX,NTG,NXG,NBBAND !NUMBER OF GROUPS,K-VALUES,TEMPERATURE,COMPOSITION,SPECTRAL BANDS
+        INTEGER IGROUP,IK,ITG,IXG,IBAND
+        ! PARAMETER (NBGROUP=32,NKMAX=15,NTG=48,NXG=1,NBBAND=323)
+        PARAMETER (NKMAX=15,NTG=48,NXG=1,NBBAND=323)
+        INTEGER ITREF,IXREF
+        PARAMETER(ITREF=27,IXREF=1) !INDEX OF THE REFERENCE STATE::TEMPERATURE IS THE HIGHEST ONE, COMPOSITION
+        INTEGER NBNU,INU
+        PARAMETER(NBNU=2500)
+        
+        ! DOUBLE PRECISION GREF(NBBAND,NBGROUP,NKMAX) !VALUES OF g IN THE REFERENCE STATE 
+        DOUBLE PRECISION,ALLOCATABLE  ::  GREF(:,:,:)    
+        
+        ! DOUBLE PRECISION KG(NKMAX,NBGROUP,NTG,NXG) !K-VALUES (UNDER THE CORRELATED-K ASSUMPTION)
+        DOUBLE PRECISION,ALLOCATABLE  ::  KG(:,:,:,:)
+
+        INTEGER NBDAT(NBBAND),NUMEAN !BAND PARAMETERS
+        CHARACTER*100 INFILE(NBBAND),OUTFILE(NBBAND) !INPUT AND OUPUT FILENAMES
+        
+        ! DOUBLE PRECISION KMIN(NBGROUP),KMAX(NBGROUP),KK(NBGROUP,NKMAX) !K-VALUES
+        DOUBLE PRECISION,ALLOCATABLE  ::  KMIN(:), KMAX(:), KK(:,:)
+        
+        ! INTEGER GROUPINDEX(NBNU),SIZEGROUP(NBGROUP)
+        INTEGER GROUPINDEX(NBNU)
+        INTEGER,ALLOCATABLE  ::  SIZEGROUP(:)
+
+
+        ! DOUBLE PRECISION DELTA(NBGROUP,NBNU),DNUG(NBGROUP)
+        DOUBLE PRECISION,ALLOCATABLE  ::  DELTA(:,:), DNUG(:)
+
+
+        DOUBLE PRECISION NULOC(NBNU),KLOC(NBNU,NTG,NXG)
+        DOUBLE PRECISION KLOCG(NBNU,NTG,NXG),RKLOC(NBNU)
+    END MODULE MSCK_CO2
+	
+	PROGRAM MAIN
+	    USE MSCK_CO2
+	    IMPLICIT NONE
+	    INTEGER IDGROUP
+	    INTEGER INDE(NBNU)
+        DOUBLE PRECISION G1,G2
+        !READ BAND DATA AND CREAT IN/OUTFILENAMES
+        CALL LECT_C
+        !! LOOP OVER NARROW BANDS
+        DO IBAND=1,NBBAND
+            !! READ CLUSTER DATA
+            CALL LECT_CDATA(IBAND)
+            !! GENERATE DIRAC MATRIX
+            
+            ! GET GROUP MAX
+            NBGROUP = maxval(GROUPINDEX)
+            print *, "CLASSES:", NBGROUP
+            !! START
+            ALLOCATE(GREF(NBBAND, NBGROUP, NKMAX))
+            ALLOCATE(KG(NKMAX,NBGROUP,NTG,NXG))
+            ALLOCATE(KMIN(NBGROUP))
+            ALLOCATE(KMAX(NBGROUP))
+            ALLOCATE(KK(NBGROUP,NKMAX))
+            ALLOCATE(SIZEGROUP(NBGROUP))
+            ALLOCATE(DELTA(NBGROUP,NBNU))
+            ALLOCATE(DNUG(NBGROUP))
+            !!!
+            !! END DYNAMIC CHANGE
+            !!!
+
+
+            CALL DELTACALC
+            !! SEARCH MIN AND MAX ABS COEFF FOR EACH GROUP AND TEMPERATURE
+            !! CALCULATE CLUSTERSIZES
+            CALL KMINMAX
+            CALL CLUSTERSIZE
+            !! LOOP OVER GROUPS
+            ! print *, INFILE(IBAND)
+            ! open(UNIT=90,FILE=INFILE(IBAND),STATUS='OLD',ACTION='read')
+            ! do tmp_i=1, 2500
+            !     read(IBAND, *) linebuf
+            !     print *, trim(linebuf)
+            !     read (*,*)
+            ! end do
+            DO IGROUP=1,NBGROUP
+                !! INIT G-VALUES
+                DO IK=1,NKMAX-1
+                    GREF(IBAND,IGROUP,IK)=0.D0
+                END DO
+                GREF(IBAND,IGROUP,NKMAX)=1.D0
+            !! GENERATES K-VALUES
+                DO IK=1,NKMAX
+                    KK(IGROUP,IK)=KMIN(IGROUP)*(KMAX(IGROUP)/KMIN(IGROUP))**(DBLE(IK-1)/(NKMAX-1))
+                END DO
+                !! PUT ABSORPTION COEFFICIENTS IN THEIR OWN CLUSTER
+                IDGROUP=0
+                    DO INU=1,NBNU
+                    RKLOC(INU)=0.D0
+                        DO ITG=1,NTG
+                            DO IXG=1,NXG
+                            KLOCG(INU,ITG,IXG)=0.D0
+                            END DO
+                        END DO
+                    END DO
+                DO INU=1,NBNU
+                    IF(DELTA(IGROUP,INU).GT.0.D0) THEN
+                        IDGROUP=IDGROUP+1
+                        DO ITG=1,NTG
+                            DO IXG=1,NXG
+                                KLOCG(IDGROUP,ITG,IXG)=KLOC(INU,ITG,IXG)
+                            END DO
+                        END DO
+                    END IF
+                END DO
+                IF(IDGROUP.NE.SIZEGROUP(IGROUP)) WRITE(*,*) 'ERROR' !TEST
+                !! REORDERING IN THE REFERENCE STATE
+                DO IDGROUP=1,SIZEGROUP(IGROUP)
+                    RKLOC(IDGROUP)=KLOCG(IDGROUP,ITREF,IXREF)
+                END DO
+                CALL INDEXX(SIZEGROUP(IGROUP),RKLOC,INDE)
+                
+                KMIN(IGROUP)=RKLOC(INDE(1))
+                KMAX(IGROUP)=RKLOC(INDE(SIZEGROUP(IGROUP)))
+                DO IK=1,NKMAX
+                    KK(IGROUP,IK)=KMIN(IGROUP)*(KMAX(IGROUP)/KMIN(IGROUP))**(DBLE(IK-1)/(NKMAX-1))
+                END DO
+                !! CALCULATE GREF
+                DO IDGROUP=1,SIZEGROUP(IGROUP)-1
+                    DO IK=1,NKMAX
+                        IF(KLOCG(INDE(IDGROUP),ITREF,IXREF)&
+                        &.LT.KK(IGROUP,IK)&
+                        &.AND.KLOCG(INDE(IDGROUP+1),ITREF,IXREF)&
+                        &.GE.KK(IGROUP,IK)) THEN
+                            G1=(DBLE(IDGROUP)-1.D0)/(DBLE(SIZEGROUP(IGROUP))-1.D0)
+                            G2=(DBLE(IDGROUP+1)-1.D0)/(DBLE(SIZEGROUP(IGROUP))-1.D0)
+                            GREF(IBAND,IGROUP,IK)=G1+DLOG(KK(IGROUP,IK)/KLOCG(INDE(IDGROUP),ITREF,IXREF))/ & 
+                            & DLOG(KLOCG(INDE(IDGROUP+1),ITREF,IXREF)/KLOCG(INDE(IDGROUP),ITREF,IXREF))*(G2-G1)
+                        END IF
+                    END DO
+                END DO
+
+                GREF(IBAND,IGROUP,1)=0.D0
+                GREF(IBAND,IGROUP,NKMAX)=1.D0
+                !! REORDERING IN THE OTHER STATE
+                !! LOOP OVER TEMPERATURE
+                DO ITG=1,NTG
+                    !!LOOP OVER COMPOSITION
+                    DO IXG=1,NXG
+                        !! REORDERING
+                        DO IDGROUP=1,SIZEGROUP(IGROUP)
+                            RKLOC(IDGROUP)=KLOCG(IDGROUP,ITG,IXG)
+                        END DO
+                        CALL INDEXX(SIZEGROUP(IGROUP),RKLOC,INDE)
+                        KG(1,IGROUP,ITG,IXG)=KLOCG(INDE(1),ITG,IXG)
+                        KG(NKMAX,IGROUP,ITG,IXG)=KLOCG(INDE(SIZEGROUP(IGROUP)),ITG,IXG)
+                        DO IDGROUP=1,SIZEGROUP(IGROUP)-1 !LOOP OVER THE GROUP
+                            G1=(DBLE(IDGROUP)-1.D0)/(DBLE(SIZEGROUP(IGROUP))-1.D0)
+                            G2=(DBLE(IDGROUP+1)-1.D0)/(DBLE(SIZEGROUP(IGROUP))-1.D0)
+                            DO IK=2,NKMAX !LOOP OVER K-VALUES
+                                IF(G1.LE.GREF(IBAND,IGROUP,IK).AND.G2.GT.GREF(IBAND,IGROUP,IK)) THEN
+                                    KG(IK,IGROUP,ITG,IXG)=DLOG(KLOCG(INDE(IDGROUP),ITG,IXG))+(GREF(IBAND,IGROUP,IK)-G1) &
+                                    & /(G2-G1)*DLOG(KLOCG(INDE(IDGROUP+1),ITG,IXG)/KLOCG(INDE(IDGROUP),ITG,IXG))
+                                    KG(IK,IGROUP,ITG,IXG)=DEXP(KG(IK,IGROUP,ITG,IXG))
+                                END IF
+                            END DO !END LOOP OVER K-VALUES
+                        END DO !END LOOP OVER THE GROUP
+                    END DO !END LOOP OVER COMPOSITION
+                END DO !END LOOP OVER TEMPERATURE
+                !!END LOOP OVER GROUPS
+            END DO
+            !! OUTPUT   	
+            !! CREATE MSCK OUTPUT FILENAME
+            IF(NUMEAN.LT.1000) WRITE(OUTFILE(IBAND),211) NUMEAN
+            IF(NUMEAN.GE.1000) WRITE(OUTFILE(IBAND),212) NUMEAN
+        211 FORMAT('../../../../MSCK25-DATA-NEW-HUANGSIYUAN/CO2/MSCK_CO2_',I3,'CM_1')   
+        212 FORMAT('../../../../MSCK25-DATA-NEW-HUANGSIYUAN/CO2/MSCK_CO2_',I4,'CM_1')
+            OPEN(1,FILE=OUTFILE(IBAND))
+            DO IGROUP=1,NBGROUP !LOOP OVER GROUPS
+                WRITE(1,102) DBLE(SIZEGROUP(IGROUP))/DBLE(NBNU),(GREF(IBAND,IGROUP,IK),IK=1,NKMAX)
+                DO ITG=1,NTG !LOOP OVER TEMPERATURE
+                    DO IXG=1,NXG !LOOP OVER COMPOSITION
+                        WRITE(1,102) (KG(IK,IGROUP,ITG,IXG),IK=1,NKMAX)
+                    END DO !END LOOP OVER COMPOSITION
+                END DO !END LOOP OVER TEMPERATURE
+            END DO !END LOOP OVER GROUPS
+            CLOSE(1)
+            DEALLOCATE(GREF)
+            DEALLOCATE(KG)
+            DEALLOCATE(KMIN)
+            DEALLOCATE(KMAX)
+            DEALLOCATE(KK)
+            DEALLOCATE(SIZEGROUP)
+            DEALLOCATE(DELTA)
+            DEALLOCATE(DNUG)
+        END DO !END LOOP OVER BANDS
+    101 FORMAT(7(F12.6,1X))
+    102 FORMAT(100(E20.10,1X))
+    END
+       

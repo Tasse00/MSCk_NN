@@ -1,0 +1,7 @@
+        !COMPILER-GENERATED INTERFACE MODULE: Thu Sep 18 10:48:37 2014
+        MODULE LECT_B_mod
+          INTERFACE 
+            SUBROUTINE LECT_B
+            END SUBROUTINE LECT_B
+          END INTERFACE 
+        END MODULE LECT_B_mod

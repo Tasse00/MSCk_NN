@@ -1,0 +1,8 @@
+        !COMPILER-GENERATED INTERFACE MODULE: Tue May 15 19:51:32 2018
+        MODULE CASEGEN__genmod
+          INTERFACE 
+            SUBROUTINE CASEGEN
+              USE ML1D_MOD
+            END SUBROUTINE CASEGEN
+          END INTERFACE 
+        END MODULE CASEGEN__genmod
